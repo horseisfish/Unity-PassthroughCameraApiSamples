@@ -19,6 +19,11 @@ namespace PassthroughCameraSamples.MultiObjectDetection
         [SerializeField] private Font m_font;
         [SerializeField] private Color m_fontColor;
         [SerializeField] private int m_fontSize = 80;
+        
+        [Header("3D Marker References")]
+        [SerializeField] private GameObject m_markerPrefab; // Reference to marker prefab
+        [SerializeField] private Color m_uiMarkerColor = new Color(0.2f, 0.8f, 1.0f, 0.7f); // Color for UI markers
+        
         [Space(10)]
         public UnityEvent<int> OnObjectsDetected;
 
@@ -26,7 +31,9 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
         private string[] m_labels;
         private List<GameObject> m_boxPool = new();
+        private List<GameObject> m_markerPool = new(); // Pool of 3D markers
         private Transform m_displayLocation;
+        private EnvironmentRayCastSampleManager m_environmentRaycast;
 
         //bounding box data
         public struct BoundingBox
@@ -46,16 +53,25 @@ namespace PassthroughCameraSamples.MultiObjectDetection
         private void Start()
         {
             m_displayLocation = m_displayImage.transform;
+            // Find environment raycast manager
+            m_environmentRaycast = FindObjectOfType<EnvironmentRayCastSampleManager>();
+        }
+        
+        private void OnDestroy()
+        {
+            // Clean up all markers
+            ClearMarkers();
         }
         #endregion
 
         #region Detection Functions
         public void OnObjectDetectionError()
         {
-            // Clear current boxes
+            // Clear current boxes and markers
             ClearAnnotations();
+            ClearMarkers();
 
-            // Set obejct found to 0
+            // Set object found to 0
             OnObjectsDetected?.Invoke(0);
         }
         #endregion
@@ -74,8 +90,9 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
         public void DrawUIBoxes(Tensor<float> output, Tensor<int> labelIDs, float imageWidth, float imageHeight)
         {
-            // Clear current boxes
+            // Clear current boxes and markers
             ClearAnnotations();
+            ClearMarkers();
 
             var displayWidth = m_displayImage.rectTransform.rect.width;
             var displayHeight = m_displayImage.rectTransform.rect.height;
@@ -96,7 +113,7 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
             OnObjectsDetected?.Invoke(maxBoxes);
 
-            //Draw the bounding boxes
+            // Draw the bounding boxes
             for (var n = 0; n < maxBoxes; n++)
             {
                 var box = new BoundingBox
@@ -118,8 +135,11 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                 box.Label += $" Coords: {box.PerX:0.00},{box.PerY:0.00}";
                 box.Label += $" Center: {box.CenterX:.00},{box.CenterY:.00}";
 
-                // Draw 2D box
-                box.WorldPos = DrawBox(box, n);
+                // Draw 2D box and get its world position
+                GameObject boxObject = DrawBoxWithMarker(box, n);
+                Vector3 worldPos = boxObject.transform.position;
+                box.WorldPos = worldPos;
+                
                 BoxDrawn.Add(box);
             }
         }
@@ -135,17 +155,29 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             }
             BoxDrawn.Clear();
         }
-
-        private Vector3 DrawBox(BoundingBox box, int id)
+        
+        private void ClearMarkers()
         {
-            //Create the bounding box graphic or get from pool
+            foreach (var marker in m_markerPool)
+            {
+                if (marker != null)
+                {
+                    Destroy(marker);
+                }
+            }
+            m_markerPool.Clear();
+        }
+        
+        private GameObject DrawBoxWithMarker(BoundingBox box, int id)
+        {
+            // Create the 2D box UI
             GameObject panel;
             if (id < m_boxPool.Count)
             {
                 panel = m_boxPool[id];
                 if (panel == null)
                 {
-                    panel = CreateNewBox(m_boxColor);
+                    panel = CreateNewBox(m_boxColor, box.ClassName, id);
                 }
                 else
                 {
@@ -154,28 +186,72 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             }
             else
             {
-                panel = CreateNewBox(m_boxColor);
+                panel = CreateNewBox(m_boxColor, box.ClassName, id);
             }
-            //Set box position
+            
+            // Set box position
             panel.transform.localPosition = new Vector3(box.CenterX, -box.CenterY);
 
             // look at the player
             var rotX = 60.0f * box.PerX - 30.0f;
             panel.transform.localRotation = Quaternion.Euler(0, rotX, 0);
 
-            //Set box size
+            // Set box size
             var rt = panel.GetComponent<RectTransform>();
             rt.sizeDelta = new Vector2(box.Width, box.Height);
 
-            //Set label text
+            // Set label text
             var label = panel.GetComponentInChildren<Text>();
             label.text = box.Label;
             label.fontSize = 12;
-
-            return panel.transform.position;
+            
+            // Create 3D marker at this position
+            if (m_markerPrefab != null && m_environmentRaycast != null)
+            {
+                Vector3 worldPos = panel.transform.position;
+                
+                // Get proper 3D position using environment raycast
+                Transform worldTransform = m_environmentRaycast.PlaceGameObject(worldPos);
+                
+                // Create or update marker
+                GameObject marker;
+                if (id < m_markerPool.Count && m_markerPool[id] != null)
+                {
+                    marker = m_markerPool[id];
+                    marker.SetActive(true);
+                }
+                else
+                {
+                    // Create new marker
+                    marker = Instantiate(m_markerPrefab);
+                    
+                    // Add to pool
+                    if (id >= m_markerPool.Count)
+                    {
+                        for (int i = m_markerPool.Count; i <= id; i++)
+                        {
+                            m_markerPool.Add(null);
+                        }
+                    }
+                    m_markerPool[id] = marker;
+                }
+                
+                // Position marker and set its properties
+                marker.transform.position = worldTransform.position;
+                marker.transform.rotation = worldTransform.rotation;
+                
+                DetectionSpawnMarkerAnim markerAnim = marker.GetComponent<DetectionSpawnMarkerAnim>();
+                if (markerAnim != null)
+                {
+                    markerAnim.SetYoloClassName(box.ClassName);
+                    markerAnim.SetTemporaryAppearance(true, m_uiMarkerColor);
+                }
+            }
+            
+            return panel;
         }
 
-        private GameObject CreateNewBox(Color color)
+        private GameObject CreateNewBox(Color color, string className, int id)
         {
             //Create the box and set image
             var panel = new GameObject("ObjectBox");
@@ -206,6 +282,7 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             rt2.anchorMax = new Vector2(1, 1);
 
             m_boxPool.Add(panel);
+            
             return panel;
         }
         #endregion

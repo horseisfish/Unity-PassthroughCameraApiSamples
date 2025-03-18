@@ -12,9 +12,20 @@ namespace PassthroughCameraSamples.MultiObjectDetection
         [SerializeField] private Transform m_model;
         [SerializeField] private TextMesh m_textModel;
         [SerializeField] private Transform m_textEntity;
+        [SerializeField] private Renderer[] m_renderers;
 
         private Vector3 m_angles;
         private OVRCameraRig m_camera;
+        private Color m_originalColor;
+        private bool m_isTemporary = false;
+
+        private void Awake()
+        {
+            if (m_renderers != null && m_renderers.Length > 0 && m_renderers[0] != null)
+            {
+                m_originalColor = m_renderers[0].material.color;
+            }
+        }
 
         private void Update()
         {
@@ -58,6 +69,42 @@ namespace PassthroughCameraSamples.MultiObjectDetection
         public string GetYoloClassName()
         {
             return m_textModel.text;
+        }
+        
+        public void SetTemporaryAppearance(bool isTemporary, Color? temporaryColor = null)
+        {
+            m_isTemporary = isTemporary;
+            
+            if (m_renderers != null)
+            {
+                foreach (var renderer in m_renderers)
+                {
+                    if (renderer != null)
+                    {
+                        if (isTemporary && temporaryColor.HasValue)
+                        {
+                            renderer.material.color = temporaryColor.Value;
+                        }
+                        else
+                        {
+                            renderer.material.color = m_originalColor;
+                        }
+                    }
+                }
+            }
+            
+            if (m_textModel != null)
+            {
+                if (isTemporary)
+                {
+                    m_textModel.color = Color.cyan;
+                    m_textModel.text = "Tracking: " + m_textModel.text;
+                }
+                else
+                {
+                    m_textModel.color = Color.white;
+                }
+            }
         }
     }
 }

@@ -33,7 +33,7 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
         private bool m_isPaused = true;
         private List<GameObject> m_spwanedEntities = new();
-        private bool m_isStarted = false;
+        public bool m_isStarted = false;
         private bool m_isSentisReady = false;
         private float m_delayPauseBackTime = 0;
 
